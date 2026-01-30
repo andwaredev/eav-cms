@@ -1,0 +1,4 @@
+# eav-cms
+
+* [backend](./backend/README.md)
+* [frontend](./frontend/README.md)

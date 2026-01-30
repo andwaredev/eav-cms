@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: eav-cms-postgres
+    environment:
+      POSTGRES_USER: eav_user
+      POSTGRES_PASSWORD: eav_password
+      POSTGRES_DB: eav_cms
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eav_user -d eav_cms"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
