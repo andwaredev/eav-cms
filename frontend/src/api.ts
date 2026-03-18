@@ -58,10 +58,12 @@ export async function fetchEntityType(id: number): Promise<EntityTypeDetail> {
   return response.json();
 }
 
-export async function fetchEntities(entityTypeId?: number): Promise<Entity[]> {
-  const url = entityTypeId 
-    ? `${API_BASE}/entities?entity_type_id=${entityTypeId}`
-    : `${API_BASE}/entities`;
+export async function fetchEntities(opts?: { entityTypeId?: number; category?: EntityTypeCategory }): Promise<Entity[]> {
+  const params = new URLSearchParams();
+  if (opts?.entityTypeId) params.set('entity_type_id', String(opts.entityTypeId));
+  if (opts?.category) params.set('category', opts.category);
+  const query = params.toString();
+  const url = query ? `${API_BASE}/entities?${query}` : `${API_BASE}/entities`;
   const response = await fetch(url);
   if (!response.ok) throw new Error('Failed to fetch entities');
   return response.json();
@@ -102,6 +104,12 @@ export async function createEntity(
     body: JSON.stringify(request),
   });
   if (!response.ok) throw new Error('Failed to create entity');
+  return response.json();
+}
+
+export async function fetchEnumValues(enumName: string): Promise<string[]> {
+  const response = await fetch(`${API_BASE}/entity-types/enums/${enumName}`);
+  if (!response.ok) throw new Error(`Failed to fetch enum values for ${enumName}`);
   return response.json();
 }
 

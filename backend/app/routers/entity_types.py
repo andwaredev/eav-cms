@@ -43,6 +43,25 @@ def list_entity_types(db: Session = Depends(get_db)):
     return [dict(row._mapping) for row in result]
 
 
+@router.get("/enums/{enum_name}", response_model=list[str])
+def get_enum_values(enum_name: str, db: Session = Depends(get_db)):
+    """Get the allowed values for a PostgreSQL enum type."""
+    result = db.execute(
+        text("""
+            SELECT e.enumlabel
+            FROM pg_enum e
+            JOIN pg_type t ON e.enumtypid = t.oid
+            WHERE t.typname = :enum_name
+            ORDER BY e.enumsortorder
+        """),
+        {"enum_name": enum_name}
+    )
+    values = [row.enumlabel for row in result]
+    if not values:
+        raise HTTPException(status_code=404, detail=f"Enum type '{enum_name}' not found")
+    return values
+
+
 @router.get("/{entity_type_id}", response_model=EntityTypeDetailResponse)
 def get_entity_type(entity_type_id: int, db: Session = Depends(get_db)):
     """Get an entity type with its attributes."""

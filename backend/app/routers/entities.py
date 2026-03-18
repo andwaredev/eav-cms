@@ -101,6 +101,19 @@ def fetch_entity_values(db: Session, entity_id: int, depth: int = 0, max_depth: 
     for row in json_result:
         values[row.slug] = row.value
 
+    # Function key values
+    function_key_result = db.execute(
+        text("""
+            SELECT a.slug, v.value::text
+            FROM values_function_key v
+            JOIN attributes a ON v.attribute_id = a.id
+            WHERE v.entity_id = :entity_id
+        """),
+        {"entity_id": entity_id}
+    )
+    for row in function_key_result:
+        values[row.slug] = row.value
+
     # Relation values (single) - recursively fetch related entities
     if depth < max_depth:
         relation_result = db.execute(
@@ -162,9 +175,10 @@ def fetch_entity_values(db: Session, entity_id: int, depth: int = 0, max_depth: 
 @router.get("", response_model=list[EntityResponse])
 def list_entities(
     entity_type_id: int | None = Query(None, description="Filter by entity type"),
+    category: str | None = Query(None, description="Filter by entity type category"),
     db: Session = Depends(get_db)
 ):
-    """List all entities, optionally filtered by entity type."""
+    """List all entities, optionally filtered by entity type or category."""
     if entity_type_id:
         result = db.execute(
             text("""
@@ -175,6 +189,17 @@ def list_entities(
                 ORDER BY e.name
             """),
             {"entity_type_id": entity_type_id}
+        )
+    elif category:
+        result = db.execute(
+            text("""
+                SELECT e.id, e.name, e.slug, e.entity_type_id, et.name as entity_type_name
+                FROM entities e
+                JOIN entity_types et ON e.entity_type_id = et.id
+                WHERE et.category = CAST(:category AS entity_type_category)
+                ORDER BY et.name, e.name
+            """),
+            {"category": category}
         )
     else:
         result = db.execute(
@@ -245,6 +270,8 @@ def create_entity(
 
             if attr_type in ("text", "textarea", "hex"):
                 _upsert_value(db, "values_text", entity_id, attr_id, value)
+            elif attr_type == "function_key":
+                _upsert_function_key(db, entity_id, attr_id, value)
             elif attr_type == "number":
                 _upsert_value(db, "values_number", entity_id, attr_id, value)
             elif attr_type == "boolean":
@@ -358,6 +385,8 @@ def update_entity_values(
         # Determine table and update/insert value
         if attr_type in ("text", "textarea", "hex"):
             _upsert_value(db, "values_text", entity_id, attr_id, value)
+        elif attr_type == "function_key":
+            _upsert_function_key(db, entity_id, attr_id, value)
         elif attr_type == "number":
             _upsert_value(db, "values_number", entity_id, attr_id, value)
         elif attr_type == "boolean":
@@ -392,6 +421,7 @@ def delete_entity(entity_id: int, db: Session = Depends(get_db)):
     db.execute(text("DELETE FROM values_boolean WHERE entity_id = :id"), {"id": entity_id})
     db.execute(text("DELETE FROM values_datetime WHERE entity_id = :id"), {"id": entity_id})
     db.execute(text("DELETE FROM values_json WHERE entity_id = :id"), {"id": entity_id})
+    db.execute(text("DELETE FROM values_function_key WHERE entity_id = :id"), {"id": entity_id})
     db.execute(text("DELETE FROM values_relation WHERE entity_id = :id"), {"id": entity_id})
     db.execute(text("DELETE FROM values_relation_multi WHERE entity_id = :id"), {"id": entity_id})
 
@@ -423,6 +453,26 @@ def _upsert_value(db: Session, table: str, entity_id: int, attr_id: int, value: 
             text(f"""
                 INSERT INTO {table} (entity_id, attribute_id, value)
                 VALUES (:entity_id, :attr_id, :value)
+            """),
+            {"value": value, "entity_id": entity_id, "attr_id": attr_id}
+        )
+
+
+def _upsert_function_key(db: Session, entity_id: int, attr_id: int, value: Any):
+    """Insert or update a function_key enum value."""
+    result = db.execute(
+        text("""
+            UPDATE values_function_key
+            SET value = CAST(:value AS function_key)
+            WHERE entity_id = :entity_id AND attribute_id = :attr_id
+        """),
+        {"value": value, "entity_id": entity_id, "attr_id": attr_id}
+    )
+    if result.rowcount == 0:  # type: ignore[union-attr]
+        db.execute(
+            text("""
+                INSERT INTO values_function_key (entity_id, attribute_id, value)
+                VALUES (:entity_id, :attr_id, CAST(:value AS function_key))
             """),
             {"value": value, "entity_id": entity_id, "attr_id": attr_id}
         )
