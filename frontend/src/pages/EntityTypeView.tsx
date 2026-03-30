@@ -23,7 +23,7 @@ export default function EntityTypeView() {
 
     Promise.all([
       fetchEntityType(Number(typeId)),
-      fetchEntities(Number(typeId)),
+      fetchEntities({ entityTypeId: Number(typeId) }),
     ])
       .then(([type, ents]) => {
         setEntityType(type);

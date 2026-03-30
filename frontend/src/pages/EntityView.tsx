@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { createEntity, deleteEntity, fetchEntities, fetchEntity, fetchEntityType, updateEntityValues } from '../api';
+import { createEntity, deleteEntity, EntityTypeCategory, fetchEntities, fetchEntity, fetchEntityType, fetchEnumValues, updateEntityValues } from '../api';
 import type { Attribute, Entity, EntityDetail, EntityTypeDetail } from '../api';
 import { useAdminMode } from '../context/AdminModeContext';
 
@@ -80,7 +80,7 @@ function MultiRelationEditor({
       setLoading(false);
       return;
     }
-    fetchEntities(entityTypeId)
+    fetchEntities({ entityTypeId: entityTypeId ?? undefined })
       .then(setAvailableEntities)
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -254,7 +254,7 @@ function SingleRelationEditor({
 
   useEffect(() => {
     // Fetch entities with their values
-    fetchEntities(entityTypeId)
+    fetchEntities({ entityTypeId })
       .then(async (entities) => {
         // For color entities, we need the full details with hex values
         if (entityTypeName === 'color') {
@@ -355,7 +355,7 @@ function EmptyRelationEditor({
   const [selectedEntities, setSelectedEntities] = useState<RelatedEntity[]>([]);
 
   useEffect(() => {
-    fetchEntities(relatedEntityTypeId)
+    fetchEntities({ entityTypeId: relatedEntityTypeId })
       .then(setAvailableEntities)
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -422,7 +422,7 @@ function EmptyRelationEditor({
       setNewName('');
       setShowCreateForm(false);
       // Refresh available entities
-      const entities = await fetchEntities(relatedEntityTypeId);
+      const entities = await fetchEntities({ entityTypeId: relatedEntityTypeId });
       setAvailableEntities(entities);
     } catch (err) {
       console.error('Failed to create:', err);
@@ -546,15 +546,295 @@ function EmptyRelationEditor({
   );
 }
 
+function EnumSelect({
+  enumName,
+  value,
+  onChange,
+}: {
+  enumName: string;
+  value: string;
+  onChange: (newValue: string | null) => void;
+}) {
+  const [options, setOptions] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchEnumValues(enumName)
+      .then(setOptions)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [enumName]);
+
+  if (loading) return <span>Loading...</span>;
+
+  return (
+    <select
+      className="edit-select"
+      value={value}
+      onChange={(e) => onChange(e.target.value || null)}
+    >
+      <option value="" disabled>
+        Select {enumName.replace(/_/g, ' ')}...
+      </option>
+      {options.map((opt) => (
+        <option key={opt} value={opt}>
+          {opt}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+// Editor for multi-relations that can reference any entity in a category (e.g. any component)
+function CategoryMultiRelationEditor({
+  category,
+  value,
+  onChange,
+  excludeEntityId,
+  allowedTypes,
+}: {
+  category: string;
+  value: RelatedEntity[];
+  onChange: (newValue: RelatedEntity[]) => void;
+  excludeEntityId?: number;
+  allowedTypes?: string[];
+}) {
+  const [availableEntities, setAvailableEntities] = useState<Entity[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const loadEntities = () => {
+    fetchEntities({ category: category as 'content' | 'component' })
+      .then(setAvailableEntities)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadEntities();
+  }, [category]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRemove = (index: number) => {
+    onChange(value.filter((_, i) => i !== index));
+  };
+
+  const handleMoveUp = (index: number) => {
+    if (index === 0) return;
+    const next = [...value];
+    [next[index - 1], next[index]] = [next[index], next[index - 1]];
+    onChange(next);
+  };
+
+  const handleMoveDown = (index: number) => {
+    if (index >= value.length - 1) return;
+    const next = [...value];
+    [next[index], next[index + 1]] = [next[index + 1], next[index]];
+    onChange(next);
+  };
+
+  const handleAdd = (entityId: number) => {
+    const entityToAdd = availableEntities.find((e) => e.id === entityId);
+    if (entityToAdd && !value.some((e) => e.id === entityId)) {
+      const newRelated: RelatedEntity = {
+        id: entityToAdd.id,
+        name: entityToAdd.name,
+        slug: entityToAdd.slug,
+        entity_type_id: entityToAdd.entity_type_id,
+        entity_type_name: entityToAdd.entity_type_name,
+        values: { name: entityToAdd.name },
+      };
+      onChange([...value, newRelated]);
+    }
+  };
+
+  const unselectedEntities = availableEntities.filter(
+    (e) => !value.some((v) => v.id === e.id)
+      && e.id !== excludeEntityId
+      && (!allowedTypes || allowedTypes.includes(e.entity_type_name))
+  );
+
+  // Group unselected entities by type for the dropdown
+  const groupedEntities = unselectedEntities.reduce<Record<string, Entity[]>>((acc, entity) => {
+    const typeName = entity.entity_type_name;
+    if (!acc[typeName]) acc[typeName] = [];
+    acc[typeName].push(entity);
+    return acc;
+  }, {});
+
+  if (loading) return <span>Loading...</span>;
+
+  return (
+    <div className="multi-relation-editor">
+      {value.length > 0 && (
+        <div className="ordered-list">
+          {value.map((entity, index) => (
+            <div key={entity.id} className="ordered-list-item">
+              <span className="ordered-list-index">{index}</span>
+              <span className="ordered-list-content">
+                <span className="attr-type-hint">{entity.entity_type_name}</span>
+                {' '}
+                {entity.values.name ? String(entity.values.name) : entity.name}
+              </span>
+              <span className="ordered-list-actions">
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => handleMoveUp(index)}
+                  disabled={index === 0}
+                  title="Move up"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon"
+                  onClick={() => handleMoveDown(index)}
+                  disabled={index === value.length - 1}
+                  title="Move down"
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  className="btn-icon btn-icon-danger"
+                  onClick={() => handleRemove(index)}
+                  title="Remove"
+                >
+                  ×
+                </button>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="relation-actions">
+        {unselectedEntities.length > 0 && (
+          <select
+            className="edit-select"
+            value=""
+            onChange={(e) => handleAdd(Number(e.target.value))}
+          >
+            <option value="" disabled>
+              + Add {category}...
+            </option>
+            {Object.entries(groupedEntities).map(([typeName, entities]) => (
+              <optgroup key={typeName} label={typeName}>
+                {entities.map((entity) => (
+                  <option key={entity.id} value={entity.id}>
+                    {entity.name}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Editor for single relations that can reference any entity in a category (e.g. any content)
+function CategorySingleRelationEditor({
+  category,
+  value,
+  onChange,
+  allowedTypes,
+}: {
+  category: string;
+  value: RelatedEntity | null;
+  onChange: (newValue: unknown) => void;
+  allowedTypes?: string[];
+}) {
+  const [allEntities, setAllEntities] = useState<Entity[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchEntities({ category: category as 'content' | 'component' })
+      .then(setAllEntities)
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [category]);
+
+  const availableEntities = allowedTypes
+    ? allEntities.filter((e) => allowedTypes.includes(e.entity_type_name))
+    : allEntities;
+
+  const handleChange = (entityId: number) => {
+    const selected = availableEntities.find((e) => e.id === entityId);
+    if (selected) {
+      const newRelated: RelatedEntity = {
+        id: selected.id,
+        name: selected.name,
+        slug: selected.slug,
+        entity_type_id: selected.entity_type_id,
+        entity_type_name: selected.entity_type_name,
+        values: { name: selected.name },
+      };
+      onChange(newRelated);
+    }
+  };
+
+  const handleClear = () => {
+    onChange(null);
+  };
+
+  // Group entities by type for the dropdown
+  const groupedEntities = availableEntities.reduce<Record<string, Entity[]>>((acc, entity) => {
+    const typeName = entity.entity_type_name;
+    if (!acc[typeName]) acc[typeName] = [];
+    acc[typeName].push(entity);
+    return acc;
+  }, {});
+
+  if (loading) return <span>Loading...</span>;
+
+  return (
+    <div className="single-relation-editor">
+      <select
+        className="edit-select"
+        value={value?.id ?? ''}
+        onChange={(e) => {
+          const val = e.target.value;
+          if (val) handleChange(Number(val));
+        }}
+      >
+        <option value="" disabled>
+          Select {category}...
+        </option>
+        {Object.entries(groupedEntities).map(([typeName, entities]) => (
+          <optgroup key={typeName} label={typeName}>
+            {entities.map((entity) => (
+              <option key={entity.id} value={entity.id}>
+                {entity.name}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      {value && (
+        <button
+          type="button"
+          className="btn-icon btn-icon-danger"
+          onClick={handleClear}
+          title="Clear"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Editor that knows the attribute type - handles both empty and existing values
 function AttributeEditor({
   attribute,
   value,
   onChange,
+  entityId,
 }: {
   attribute: Attribute | null;
   value: unknown;
   onChange: (newValue: unknown) => void;
+  entityId?: number;
 }) {
   const hasValue = value !== undefined && value !== null;
 
@@ -567,7 +847,10 @@ function AttributeEditor({
   }
 
   // For complex types (objects/arrays like relations), delegate to ValueEditor
-  if (hasValue && typeof value === 'object') {
+  // Exception: relations with no specific related type use Category*RelationEditor
+  const isCategoryRelation = !attribute.related_entity_type &&
+    (attribute.type === 'relation' || attribute.type === 'relation_multi');
+  if (hasValue && typeof value === 'object' && !isCategoryRelation) {
     return <ValueEditor value={value} onChange={onChange} />;
   }
 
@@ -632,6 +915,14 @@ function AttributeEditor({
           onChange={(e) => onChange(e.target.value ? new Date(e.target.value).toISOString() : null)}
         />
       );
+    case 'function_key':
+      return (
+        <EnumSelect
+          enumName="function_key"
+          value={hasValue ? String(value) : ''}
+          onChange={onChange}
+        />
+      );
     case 'relation':
       // Single relation - show dropdown to select
       if (attribute.related_entity_type) {
@@ -644,7 +935,15 @@ function AttributeEditor({
           />
         );
       }
-      return <span className="empty-value">No relation type configured</span>;
+      // No specific related type — allow any component
+      return (
+        <CategorySingleRelationEditor
+          category={EntityTypeCategory.Component}
+          value={isRelatedEntity(value) ? value : null}
+          onChange={onChange}
+          allowedTypes={['function', 'row_key', 'text']}
+        />
+      );
     case 'relation_multi':
       // Multi relation - show dropdown to add
       if (attribute.related_entity_type) {
@@ -657,7 +956,16 @@ function AttributeEditor({
           />
         );
       }
-      return <span className="empty-value">No relation type configured</span>;
+      // No specific related type — allow any component
+      return (
+        <CategoryMultiRelationEditor
+          category={EntityTypeCategory.Component}
+          value={isRelatedEntityArray(value) ? value : []}
+          onChange={onChange}
+          excludeEntityId={entityId}
+          allowedTypes={['function', 'row_key', 'text']}
+        />
+      );
     default:
       return (
         <input
@@ -1002,6 +1310,7 @@ export default function EntityView() {
                         attribute={row.attribute}
                         value={row.value}
                         onChange={(newValue) => handleValueChange(row.slug, newValue)}
+                        entityId={entity?.id}
                       />
                     ) : (
                       row.hasValue ? <ValueDisplay value={row.value} /> : <span className="empty-value">—</span>

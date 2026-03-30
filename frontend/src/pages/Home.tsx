@@ -22,8 +22,16 @@ export default function Home() {
   if (loading) return <div className="loading">Loading...</div>;
   if (error) return <div className="error">Error: {error}</div>;
 
+  const visibleContent = new Set(['file_presentation_column_value']);
+  const visibleComponents = new Set(['function', 'row_key', 'text']);
+
+  const filtered = entityTypes.filter((type) =>
+    (type.category === EntityTypeCategory.Content && visibleContent.has(type.name)) ||
+    (type.category === EntityTypeCategory.Component && visibleComponents.has(type.name))
+  );
+
   // Group entity types by category
-  const grouped = entityTypes.reduce((acc, type) => {
+  const grouped = filtered.reduce((acc, type) => {
     const cat = type.category;
     if (!acc[cat]) acc[cat] = [];
     acc[cat].push(type);
